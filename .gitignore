@@ -8,3 +8,7 @@ env/
 
 # macOS 系統檔案
 .DS_Store
+
+# 金鑰與敏感 JSON 檔案 (絕對不要上傳)
+*.json
+!watchlist.json

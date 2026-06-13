@@ -1,6 +1,7 @@
 import streamlit as st
 from FinanceDashboard import FinanceService
 import pandas as pd
+from streamlit_gsheets import GSheetsConnection
 import altair as alt
 import json
 import os
@@ -10,22 +11,53 @@ from datetime import datetime
 # 頁面設定
 st.set_page_config(page_title="金融即時監控儀表板", page_icon="📈", layout="wide")
 
-# 追蹤清單檔案
-WATCHLIST_FILE = "watchlist.json"
+# --- Google Sheets 處理邏輯 ---
+def get_gsheets_conn():
+    return st.connection("gsheets", type=GSheetsConnection)
 
-def load_watchlist():
-    if os.path.exists(WATCHLIST_FILE):
-        with open(WATCHLIST_FILE, "r") as f:
-            return json.load(f)
-    # 預設個股追蹤清單
-    return ["AAPL", "TSLA", "NVDA", "2330.TW", "00919.TW", "00929.TW"]
+def fetch_watchlist_from_gs(conn, user_id):
+    """從 Google Sheets 取得使用者的追蹤清單"""
+    try:
+        df = conn.read(ttl="1s") # 極短快取，確保讀取靈敏
+        if df is not None and not df.empty and "user_id" in df.columns:
+            user_data = df[df["user_id"] == user_id]
+            if not user_data.empty:
+                return json.loads(user_data.iloc[0]["watchlist"])
+    except Exception:
+        pass
+    return ["AAPL", "TSLA", "NVDA", "2330.TW"] # 找不到則回傳預設值
 
-def save_watchlist(watchlist):
-    with open(WATCHLIST_FILE, "w") as f:
-        json.dump(watchlist, f)
+def sync_watchlist_to_gs(conn, user_id, watchlist):
+    """將清單同步回 Google Sheets"""
+    try:
+        # 讀取現有資料
+        df = conn.read(ttl=0) # 強制不使用快取讀取最新狀態
+        if df is None or df.empty:
+            df = pd.DataFrame(columns=["user_id", "watchlist"])
+        
+        watchlist_json = json.dumps(watchlist)
+        
+        if user_id in df["user_id"].values:
+            # 更新現有使用者
+            df.loc[df["user_id"] == user_id, "watchlist"] = watchlist_json
+        else:
+            # 新增使用者
+            new_row = pd.DataFrame([{"user_id": user_id, "watchlist": watchlist_json}])
+            df = pd.concat([df, new_row], ignore_index=True)
+        
+        # 更新回 Google Sheets
+        conn.update(data=df)
+        # 清除快取，確保下次讀取是最新的資料
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        return True
+    except Exception as e:
+        st.sidebar.error(f"同步失敗: {e}")
+        return False
 
 def main():
     fin_svc = FinanceService()
+    conn = get_gsheets_conn()
 
     # --- 側邊欄 ---
     st.sidebar.title("⚙️ 管理面板")
@@ -37,10 +69,14 @@ def main():
     if auto_refresh:
         refresh_status.caption(f"⏳ 上次更新: {datetime.now().strftime('%H:%M:%S')}")
 
-    # 2. 編輯追蹤清單
+    # 2. 使用者識別與追蹤清單管理
     st.sidebar.markdown("---")
+    user_id = st.sidebar.text_input("👤 使用者帳號 (用於儲存清單)", value="default_user").strip()
     st.sidebar.subheader("📋 編輯追蹤清單")
-    watchlist = load_watchlist()
+    
+    # 使用 session_state 來儲存每個使用者獨立的清單
+    if 'watchlist' not in st.session_state:
+        st.session_state.watchlist = fetch_watchlist_from_gs(conn, user_id)
     
     # 搜尋功能：輸入名稱或代碼
     search_query = st.sidebar.text_input("🔍 搜尋名稱或代碼 (如: 台積電, NVDA)", "")
@@ -50,24 +86,28 @@ def main():
             # 將搜尋結果轉換為對應字典，方便顯示選單
             options = {r["display"]: r["symbol"] for r in search_results}
             selected_display = st.sidebar.selectbox("請選擇正確的項目:", list(options.keys()))
-            if st.sidebar.button("➕ 加入清單"):
+            if st.sidebar.button("➕ 加入追蹤"):
                 symbol_to_add = options[selected_display]
-                if symbol_to_add not in watchlist:
-                    watchlist.append(symbol_to_add)
-                    save_watchlist(watchlist)
+                if symbol_to_add not in st.session_state.watchlist:
+                    st.session_state.watchlist.append(symbol_to_add)
+                    sync_watchlist_to_gs(conn, user_id, st.session_state.watchlist)
                     st.rerun()
         else:
             st.sidebar.warning("找不到相符的結果")
 
     st.sidebar.write("---")
     st.sidebar.write("目前追蹤中:")
-    for ticker in watchlist:
+    for ticker in st.session_state.watchlist:
         c_t, c_b = st.sidebar.columns([3, 1])
         c_t.code(ticker)
         if c_b.button("🗑️", key=f"del_{ticker}"):
-            watchlist.remove(ticker)
-            save_watchlist(watchlist)
+            st.session_state.watchlist.remove(ticker)
+            sync_watchlist_to_gs(conn, user_id, st.session_state.watchlist)
             st.rerun()
+
+    if st.sidebar.button("💾 強制同步至雲端"):
+        if sync_watchlist_to_gs(conn, user_id, st.session_state.watchlist):
+            st.sidebar.success("同步成功！")
 
     # --- 主介面 ---
     st.title("📈 金融即時監控儀表板")
@@ -161,10 +201,10 @@ def main():
 
     # --- 3. 個股追蹤清單 (Watchlist) ---
     st.markdown("#### 🔍 自定義個股監控")
-    if not watchlist:
+    if not st.session_state.watchlist:
         st.info("目前清單為空，請從左側管理面板新增代碼。")
     else:
-        for ticker in watchlist:
+        for ticker in st.session_state.watchlist:
             with st.expander(f"📊 {ticker} 走勢詳情", expanded=True):
                 data = fin_svc.get_market_data(ticker)
                 if data:
