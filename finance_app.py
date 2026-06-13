@@ -75,8 +75,11 @@ def main():
     st.sidebar.subheader("📋 編輯追蹤清單")
     
     # 使用 session_state 來儲存每個使用者獨立的清單
-    if 'watchlist' not in st.session_state:
+    # 增加判斷：如果 user_id 改變，則重新從雲端抓取清單
+    if 'watchlist' not in st.session_state or st.session_state.get('last_user_id') != user_id:
         st.session_state.watchlist = fetch_watchlist_from_gs(conn, user_id)
+        st.session_state.last_user_id = user_id
+        st.rerun()
     
     # 搜尋功能：輸入名稱或代碼
     search_query = st.sidebar.text_input("🔍 搜尋名稱或代碼 (如: 台積電, NVDA)", "")
