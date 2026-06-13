@@ -1,0 +1,10 @@
+# Python 編譯檔
+__pycache__/
+*.pyc
+
+# 虛擬環境
+venv/
+env/
+
+# macOS 系統檔案
+.DS_Store
