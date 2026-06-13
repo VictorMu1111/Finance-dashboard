@@ -18,41 +18,56 @@ def get_gsheets_conn():
 def fetch_watchlist_from_gs(conn, user_id):
     """從 Google Sheets 取得使用者的追蹤清單"""
     try:
-        df = conn.read(ttl="1s") # 極短快取，確保讀取靈敏
+        df = conn.read(ttl="1s")
         if df is not None and not df.empty and "user_id" in df.columns:
-            user_data = df[df["user_id"] == user_id]
+            # 確保 user_id 為字串以利比對
+            df['user_id'] = df['user_id'].astype(str)
+            user_data = df[df["user_id"] == str(user_id)]
             if not user_data.empty:
                 return json.loads(user_data.iloc[0]["watchlist"])
-    except Exception:
-        pass
+    except Exception as e:
+        st.sidebar.warning(f"讀取雲端清單失敗 (使用預設值): {e}")
     return ["AAPL", "TSLA", "NVDA", "2330.TW"] # 找不到則回傳預設值
 
 def sync_watchlist_to_gs(conn, user_id, watchlist):
     """將清單同步回 Google Sheets"""
     try:
-        # 讀取現有資料
-        df = conn.read(ttl=0) # 強制不使用快取讀取最新狀態
-        if df is None or df.empty:
-            df = pd.DataFrame(columns=["user_id", "watchlist"])
+        # 1. 強制讀取最新資料並建立副本，避免影響快取
+        raw_df = conn.read(ttl=0)
         
+        # 2. 初始化或整理 Dataframe
+        if raw_df is None or raw_df.empty:
+            df = pd.DataFrame(columns=["user_id", "watchlist"])
+        else:
+            # 只保留必要的欄位，避免 GSheets 自動生成的索引欄位干擾
+            valid_cols = [c for c in ["user_id", "watchlist"] if c in raw_df.columns]
+            df = raw_df[valid_cols].copy()
+            if "user_id" not in df.columns: df["user_id"] = None
+            if "watchlist" not in df.columns: df["watchlist"] = None
+
+        # 確保類型一致
+        df['user_id'] = df['user_id'].astype(str)
+        user_id_str = str(user_id)
         watchlist_json = json.dumps(watchlist)
         
-        if user_id in df["user_id"].values:
+        if user_id_str in df["user_id"].values:
             # 更新現有使用者
-            df.loc[df["user_id"] == user_id, "watchlist"] = watchlist_json
+            df.loc[df["user_id"] == user_id_str, "watchlist"] = watchlist_json
         else:
             # 新增使用者
-            new_row = pd.DataFrame([{"user_id": user_id, "watchlist": watchlist_json}])
+            new_row = pd.DataFrame([{"user_id": user_id_str, "watchlist": watchlist_json}])
             df = pd.concat([df, new_row], ignore_index=True)
         
-        # 更新回 Google Sheets
+        # 3. 寫回雲端 (確保只寫入 user_id 與 watchlist)
+        df = df[["user_id", "watchlist"]]
         conn.update(data=df)
-        # 清除快取，確保下次讀取是最新的資料
+        
+        # 4. 清除讀取快取，強制下次重新抓取
         st.cache_data.clear()
-        st.cache_resource.clear()
         return True
     except Exception as e:
-        st.sidebar.error(f"同步失敗: {e}")
+        # 顯示具體的錯誤訊息，幫助除錯
+        st.sidebar.error(f"同步失敗: {str(e)}")
         return False
 
 def main():
@@ -92,9 +107,10 @@ def main():
             if st.sidebar.button("➕ 加入追蹤"):
                 symbol_to_add = options[selected_display]
                 if symbol_to_add not in st.session_state.watchlist:
-                    st.session_state.watchlist.append(symbol_to_add)
-                    sync_watchlist_to_gs(conn, user_id, st.session_state.watchlist)
-                    st.rerun()
+                    with st.sidebar.spinner("同步中..."):
+                        st.session_state.watchlist.append(symbol_to_add)
+                        sync_watchlist_to_gs(conn, user_id, st.session_state.watchlist)
+                        st.rerun()
         else:
             st.sidebar.warning("找不到相符的結果")
 
@@ -104,13 +120,15 @@ def main():
         c_t, c_b = st.sidebar.columns([3, 1])
         c_t.code(ticker)
         if c_b.button("🗑️", key=f"del_{ticker}"):
-            st.session_state.watchlist.remove(ticker)
-            sync_watchlist_to_gs(conn, user_id, st.session_state.watchlist)
-            st.rerun()
+            with st.sidebar.spinner("同步中..."):
+                st.session_state.watchlist.remove(ticker)
+                sync_watchlist_to_gs(conn, user_id, st.session_state.watchlist)
+                st.rerun()
 
     if st.sidebar.button("💾 強制同步至雲端"):
-        if sync_watchlist_to_gs(conn, user_id, st.session_state.watchlist):
-            st.sidebar.success("同步成功！")
+        with st.sidebar.spinner("正在同步雲端資料..."):
+            if sync_watchlist_to_gs(conn, user_id, st.session_state.watchlist):
+                st.sidebar.success("同步成功！")
 
     # --- 主介面 ---
     st.title("📈 金融即時監控儀表板")
