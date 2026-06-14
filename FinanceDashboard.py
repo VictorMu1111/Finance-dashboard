@@ -41,7 +41,7 @@ class FinanceService:
             change = float(current_price - prev_close) if (current_price is not None and prev_close is not None) else 0.0
             change_percent = (change / prev_close) * 100 if (prev_close is not None and prev_close != 0) else 0.0
 
-            # 3. 計算今年以來 (YTD) 的漲跌幅 - 改用年初開盤價作為基準，確保長線數據準確
+            # 3. 計算今年以來 (YTD) 的漲跌幅
             ytd_change_percent = 0.0
             ytd_hist = ticker.history(period="ytd")
             if not ytd_hist.empty:

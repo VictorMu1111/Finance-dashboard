@@ -33,7 +33,7 @@ def sync_watchlist_to_gs(conn, user_id, watchlist):
     """將清單同步回 Google Sheets"""
     try:
         # 1. 強制讀取最新資料並建立副本，避免影響快取
-        raw_df = conn.read(ttl=0)
+        raw_df = conn.read(ttl=0).copy()
         
         # 2. 初始化或整理 Dataframe
         if raw_df is None or raw_df.empty:
@@ -41,13 +41,13 @@ def sync_watchlist_to_gs(conn, user_id, watchlist):
         else:
             # 只保留必要的欄位，避免 GSheets 自動生成的索引欄位干擾
             valid_cols = [c for c in ["user_id", "watchlist"] if c in raw_df.columns]
-            df = raw_df[valid_cols].copy()
+            df = raw_df[valid_cols]
             if "user_id" not in df.columns: df["user_id"] = None
             if "watchlist" not in df.columns: df["watchlist"] = None
 
         # 確保類型一致
-        df['user_id'] = df['user_id'].astype(str)
-        user_id_str = str(user_id)
+        df = df.astype({"user_id": str, "watchlist": str})
+        user_id_str = str(user_id).strip()
         watchlist_json = json.dumps(watchlist)
         
         if user_id_str in df["user_id"].values:
@@ -71,15 +71,41 @@ def sync_watchlist_to_gs(conn, user_id, watchlist):
         return False
 
 def main():
+    # --- CSS 注入：美化邊框、陰影與指標卡片 ---
+    st.markdown("""
+        <style>
+        [data-testid="stMetric"] {
+            background-color: rgba(151, 166, 195, 0.15) !important;
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid rgba(151, 166, 195, 0.2);
+        }
+        [data-testid="stMetricValue"] div {
+            color: inherit !important;
+        }
+        .section-header {
+            background: linear-gradient(90deg, rgba(30,136,229,1) 0%, rgba(21,101,192,1) 100%);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
     fin_svc = FinanceService()
     conn = get_gsheets_conn()
 
     # --- 側邊欄 ---
-    st.sidebar.title("⚙️ 管理面板")
+    st.sidebar.markdown("<h2 style='color: #1E88E5;'>⚙️ 管理面板</h2>", unsafe_allow_html=True)
     
     # 1. 自動更新
     auto_refresh = st.sidebar.toggle("自動更新 (每分鐘)", value=False)
     refresh_status = st.sidebar.empty()  # 建立一個佔位符用來顯示倒數
+    
+    # 2. 圖表類型選擇
+    chart_type = st.sidebar.radio("圖表樣式", ["線圖 (Line)", "K 線圖 (K-Line)"], horizontal=True)
 
     if auto_refresh:
         refresh_status.caption(f"⏳ 上次更新: {datetime.now().strftime('%H:%M:%S')}")
@@ -131,12 +157,12 @@ def main():
                 st.sidebar.success("同步成功！")
 
     # --- 主介面 ---
-    st.title("📈 金融即時監控儀表板")
-    st.caption(f"最後更新時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (市場數據延遲約 15 分鐘)")
+    st.markdown("<h1 style='text-align: center; color: #1E88E5;'>📈 金融即時監控儀表板</h1>", unsafe_allow_html=True)
+    st.markdown(f"<p style='text-align: center; color: gray;'>最後更新時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (數據延遲約 15 分鐘)</p>", unsafe_allow_html=True)
 
     # --- 0. 匯率區塊 (以台幣為基準) ---
     with st.container(border=True):
-        st.markdown("#### 💱 即時匯率 (對台幣 TWD)")
+        st.markdown('<div class="section-header">💱 即時匯率 (對台幣 TWD)</div>', unsafe_allow_html=True)
         ex_cols = st.columns(6)
         exchanges = [
             ("🇺🇸 美金", "USDTWD=X"),
@@ -160,7 +186,7 @@ def main():
 
     # --- 1. 大宗商品區塊 (黃金, 白銀, 原油) ---
     with st.container(border=True):
-        st.markdown("#### 🔋 能源與貴金屬")
+        st.markdown('<div class="section-header">🔋 能源與貴金屬</div>', unsafe_allow_html=True)
         c1, c2, c3, c4 = st.columns(4)
         
         commodities = [
@@ -182,7 +208,7 @@ def main():
 
     # --- 2. 世界各大指數區 ---
     with st.container(border=True):
-        st.markdown("#### 🌐 全球股市指數")
+        st.markdown('<div class="section-header">🌐 全球股市指數</div>', unsafe_allow_html=True)
         
         # 定義指數區域與代碼
         index_regions = {
@@ -221,57 +247,79 @@ def main():
                             cols[col_idx].caption(f"{name} (無數據)")
 
     # --- 3. 個股追蹤清單 (Watchlist) ---
-    st.markdown("#### 🔍 自定義個股監控")
-    if not st.session_state.watchlist:
-        st.info("目前清單為空，請從左側管理面板新增代碼。")
-    else:
-        for ticker in st.session_state.watchlist:
-            with st.expander(f"📊 {ticker} 走勢詳情", expanded=True):
-                data = fin_svc.get_market_data(ticker)
-                if data:
-                    cl, cr = st.columns([1, 3])
-                    with cl:
-                        st.metric(
-                            f"{ticker} 價格", 
-                            f"{data['price']} {data['currency']}", 
-                            f"{data['change']} ({data['change_percent']}%)"
-                        )
-                        st.caption(f"更新: {data['last_update']}")
-                    with cr:
-                        hist = fin_svc.get_historical_data(ticker, period="1mo")
-                        if not hist.empty:
-                            chart_data = hist.reset_index()
-                            
-                            # 找出期間最高與最低價
-                            max_p = chart_data['Close'].max()
-                            min_p = chart_data['Close'].min()
-                            
-                            # 建立基礎圖層
-                            base = alt.Chart(chart_data).encode(
-                                x=alt.X('Date:T', title='日期'),
-                                y=alt.Y('Close:Q', title='收盤價', scale=alt.Scale(zero=False)),
-                                tooltip=['Date', 'Close']
+    with st.container(border=True):
+        st.markdown('<div class="section-header">🔍 自定義個股監控</div>', unsafe_allow_html=True)
+        if not st.session_state.watchlist:
+            st.info("目前清單為空，請從左側管理面板新增代碼。")
+        else:
+            for ticker in st.session_state.watchlist:
+                with st.expander(f"📊 {ticker} 走勢詳情", expanded=True):
+                    data = fin_svc.get_market_data(ticker)
+                    if data:
+                        cl, cr = st.columns([1, 3])
+                        with cl:
+                            st.metric(
+                                f"{ticker} 價格", 
+                                f"{data['price']} {data['currency']}", 
+                                f"{data['change']} ({data['change_percent']}%)"
                             )
-                            
-                            # 1. 主線條圖層
-                            line = base.mark_line(color='#1f77b4')
-                            
-                            # 2. 最高點標記層 (紅色點 + 標籤)
-                            hi_pt = base.transform_filter(alt.datum.Close == max_p).mark_point(color='red', size=60, filled=True)
-                            hi_lbl = base.transform_filter(alt.datum.Close == max_p).mark_text(dy=-12, color='red', fontWeight='bold').encode(
-                                text=alt.Text('Close:Q', format='.2f')
-                            )
-                            
-                            # 3. 最低點標記層 (綠色點 + 標籤)
-                            lo_pt = base.transform_filter(alt.datum.Close == min_p).mark_point(color='green', size=60, filled=True)
-                            lo_lbl = base.transform_filter(alt.datum.Close == min_p).mark_text(dy=15, color='green', fontWeight='bold').encode(
-                                text=alt.Text('Close:Q', format='.2f')
-                            )
-                            
-                            # 將所有圖層疊加顯示
-                            st.altair_chart((line + hi_pt + hi_lbl + lo_pt + lo_lbl).properties(height=200), use_container_width=True)
-                        else:
-                            st.warning("暫無歷史趨勢數據")
+                            st.caption(f"更新: {data['last_update']}")
+                        with cr:
+                            hist = fin_svc.get_historical_data(ticker, period="1mo")
+                            if not hist.empty:
+                                chart_data = hist.reset_index()
+                                
+                                if chart_type == "K 線圖 (K-Line)":
+                                    # --- K 線圖邏輯 (紅漲綠跌) ---
+                                    # 判斷漲跌顏色條件
+                                    color_condition = alt.condition(
+                                        "datum.Open <= datum.Close",
+                                        alt.value("#FF0000"),  # 漲：紅
+                                        alt.value("#00AD00")   # 跌：綠
+                                    )
+                                    
+                                    base = alt.Chart(chart_data).encode(
+                                        x=alt.X('Date:T', title='日期'),
+                                        color=color_condition,
+                                        tooltip=['Date', 'Open', 'High', 'Low', 'Close']
+                                    )
+                                    
+                                    # 影線 (High/Low)
+                                    rule = base.mark_rule().encode(
+                                        y=alt.Y('Low:Q', title='價格', scale=alt.Scale(zero=False)),
+                                        y2='High:Q'
+                                    )
+                                    
+                                    # 實體 (Open/Close)
+                                    bar = base.mark_bar().encode(
+                                        y='Open:Q',
+                                        y2='Close:Q'
+                                    )
+                                    
+                                    st.altair_chart((rule + bar).properties(height=200), use_container_width=True)
+                                    
+                                else:
+                                    # --- 原有的智慧線圖邏輯 ---
+                                    max_p = chart_data['Close'].max()
+                                    min_p = chart_data['Close'].min()
+                                    
+                                    base = alt.Chart(chart_data).encode(
+                                        x=alt.X('Date:T', title='日期'),
+                                        y=alt.Y('Close:Q', title='收盤價', scale=alt.Scale(zero=False)),
+                                        tooltip=['Date', 'Close']
+                                    )
+                                    line = base.mark_line(color='#1f77b4')
+                                    hi_pt = base.transform_filter(alt.datum.Close == max_p).mark_point(color='red', size=60, filled=True)
+                                    hi_lbl = base.transform_filter(alt.datum.Close == max_p).mark_text(dy=-12, color='red', fontWeight='bold').encode(
+                                        text=alt.Text('Close:Q', format='.2f')
+                                    )
+                                    lo_pt = base.transform_filter(alt.datum.Close == min_p).mark_point(color='green', size=60, filled=True)
+                                    lo_lbl = base.transform_filter(alt.datum.Close == min_p).mark_text(dy=15, color='green', fontWeight='bold').encode(
+                                        text=alt.Text('Close:Q', format='.2f')
+                                    )
+                                    st.altair_chart((line + hi_pt + hi_lbl + lo_pt + lo_lbl).properties(height=200), use_container_width=True)
+                            else:
+                                st.warning("暫無歷史趨勢數據")
 
     # 自動刷新
     if auto_refresh:
