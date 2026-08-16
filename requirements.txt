@@ -3,3 +3,4 @@ yfinance
 pandas
 altair
 st-gsheets-connection
+plotly
