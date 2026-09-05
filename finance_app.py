@@ -7,9 +7,92 @@ import json
 import os
 import time
 from datetime import datetime
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 # 頁面設定
 st.set_page_config(page_title="金融即時監控儀表板", page_icon="📈", layout="wide")
+
+# ============================================================
+# Email 提醒設定
+# ============================================================
+SMTP_SERVER = "smtp.gmail.com"
+SMTP_PORT = 587
+SENDER_EMAIL = "smu715@gmail.com"
+SENDER_PASSWORD = "zzeoqkzfmbteeoaq"
+
+def send_gold_alert_email(price):
+    """寄送黃金價格提醒 Email"""
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = SENDER_EMAIL
+        msg['To'] = st.session_state.email_recipient
+        msg['Subject'] = f"🚨 黃金價格達到 {price:.2f} 台幣/公克！"
+        
+        body = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; padding: 20px;">
+            <h2 style="color: #DAA520;">🚨 黃金價格提醒</h2>
+            <p>黃金價格已達到你的目標！</p>
+            <h3 style="color: red;">目前價格：{price:.2f} 台幣/公克</h3>
+            <p>目標價格：{st.session_state.email_target_price:.2f} 台幣/公克</p>
+            <hr>
+            <p style="color: gray; font-size: 12px;">此為自動通知信件，請勿直接回覆。</p>
+        </body>
+        </html>
+        """
+        
+        msg.attach(MIMEText(body, 'html'))
+        
+        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+        server.starttls()
+        server.login(SENDER_EMAIL, SENDER_PASSWORD)
+        server.send_message(msg)
+        server.quit()
+        
+        return True
+    except Exception as e:
+        st.error(f"❌ Email 寄送失敗: {e}")
+        return False
+
+def get_gold_price_per_gram_twd():
+    """取得黃金價格（台幣/公克）"""
+    try:
+        import yfinance as yf
+        gold = yf.Ticker('GC=F').history(period='1d')['Close'].iloc[-1]
+        usdtwd = yf.Ticker('USDTWD=X').history(period='1d')['Close'].iloc[-1]
+        return gold * usdtwd / 31.1035
+    except Exception as e:
+        st.error(f"❌ 取得黃金價格失敗: {e}")
+        return None
+
+def check_gold_price_and_notify(auto=False):
+    """檢查黃金價格並決定是否寄送 Email"""
+    current_hour = datetime.now().strftime('%Y-%m-%d %H:00')
+    
+    # 避免同一個小時重複寄送
+    if st.session_state.last_email_check == current_hour:
+        return
+    
+    price = get_gold_price_per_gram_twd()
+    if price is None:
+        return
+    
+    # 更新上次檢查時間
+    st.session_state.last_email_check = current_hour
+    st.session_state.last_gold_price = price
+    
+    # 檢查是否達到目標價格
+    if price >= st.session_state.email_target_price:
+        if send_gold_alert_email(price):
+            st.session_state.email_alert_sent = True
+            st.session_state.alert_sent_time = datetime.now()
+            if not auto:
+                st.sidebar.success(f"✅ 已寄出提醒！價格: {price:.2f}")
+    else:
+        if not auto:
+            st.sidebar.info(f"⏳ 尚未達到目標，目前 {price:.2f} 台幣/公克")
 
 # --- Google Sheets 處理邏輯 ---
 def get_gsheets_conn():
@@ -262,13 +345,68 @@ def main():
     for key, default in [
         ("selected_currency", None), ("selected_currency_name", ""),
         ("selected_commodity", None), ("selected_commodity_name", ""),
-        ("selected_index", None), ("selected_index_name", "")
+        ("selected_index", None), ("selected_index_name", ""),
+        ("email_recipient", "smu715@gmail.com"),
+        ("email_target_price", 4900),
+        ("last_email_check", None),
+        ("last_gold_price", None),
+        ("email_alert_sent", False),
+        ("alert_sent_time", None),
+        ("email_enabled", False)
     ]:
         if key not in st.session_state:
             st.session_state[key] = default
 
     # --- 側邊欄 ---
     st.sidebar.markdown("<h2 style='color: #1E88E5;'>⚙️ 管理面板</h2>", unsafe_allow_html=True)
+        
+    # ============================================================
+    # Email 提醒設定
+    # ============================================================
+    st.sidebar.subheader("📧 黃金價格 Email 提醒")
+    
+    email_enabled = st.sidebar.toggle("啟用提醒", value=st.session_state.email_enabled)
+    st.session_state.email_enabled = email_enabled
+    
+    if email_enabled:
+        target_price = st.sidebar.number_input(
+            "目標價格 (台幣/公克)",
+            min_value=0.0,
+            max_value=10000.0,
+            value=float(st.session_state.email_target_price),
+            step=10.0,
+            format="%.0f"
+        )
+        st.session_state.email_target_price = target_price
+        
+        recipient = st.sidebar.text_input("收件人 Email", value=st.session_state.email_recipient)
+        st.session_state.email_recipient = recipient
+        
+        st.sidebar.markdown("---")
+        
+        if st.session_state.last_gold_price:
+            st.sidebar.metric("💰 目前黃金價格", f"{st.session_state.last_gold_price:.2f} 台幣/公克")
+        
+        if st.sidebar.button("🔄 立即檢查價格"):
+            with st.spinner("檢查中..."):
+                check_gold_price_and_notify()
+            st.rerun()
+        
+        if st.session_state.email_alert_sent:
+            st.sidebar.success(f"🚨 提醒已寄出！時間: {st.session_state.alert_sent_time}")
+            if st.sidebar.button("🔄 重置提醒"):
+                st.session_state.email_alert_sent = False
+                st.session_state.alert_sent_time = None
+                st.session_state.last_email_check = None
+                st.rerun()
+        else:
+            st.sidebar.info(f"🎯 目標: {st.session_state.email_target_price:.0f} 台幣/公克")
+            st.sidebar.caption("⏰ 每小時自動檢查一次")
+    else:
+        st.sidebar.caption("啟用以設定黃金價格提醒")
+        st.sidebar.caption("當價格達到目標時，系統會自動寄送 Email")
+    
+    st.sidebar.markdown("---")
 
     auto_refresh = st.sidebar.toggle("自動更新 (每分鐘)", value=False)
     refresh_status = st.sidebar.empty()
@@ -594,7 +732,12 @@ def main():
                                 st.warning("暫無歷史趨勢數據")
 
     # --- 自動刷新 ---
+    # --- 自動刷新 + Email 檢查 ---
     if auto_refresh:
+        # 每小時自動檢查黃金價格
+        if st.session_state.email_enabled:
+            check_gold_price_and_notify(auto=True)
+        
         for i in range(60, 0, -1):
             refresh_status.caption(f"🔄 將在 {i} 秒後自動更新...")
             time.sleep(1)
