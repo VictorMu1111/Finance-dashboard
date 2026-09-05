@@ -1,14 +1,4 @@
-# Python 編譯檔
 __pycache__/
 *.pyc
-
-# 虛擬環境
-venv/
-env/
-
-# macOS 系統檔案
 .DS_Store
-
-# 金鑰與敏感 JSON 檔案 (絕對不要上傳)
-*.json
-!watchlist.json
+gold_alert_state.json

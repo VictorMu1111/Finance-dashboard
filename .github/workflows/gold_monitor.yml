@@ -1,0 +1,35 @@
+name: 黃金價格監控
+
+on:
+  schedule:
+    # 每小時執行一次（UTC時間）
+    - cron: '0 * * * *'
+  workflow_dispatch:  # 允許手動觸發
+
+jobs:
+  check-gold-price:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        
+    - name: Install dependencies
+      run: |
+        pip install yfinance
+        pip install pandas
+        
+    - name: Run gold price monitor
+      run: python gold_price_monitor.py
+      
+    - name: Upload state file
+      uses: actions/upload-artifact@v4
+      with:
+        name: gold-alert-state
+        path: gold_alert_state.json
+        if-no-files-found: ignore
