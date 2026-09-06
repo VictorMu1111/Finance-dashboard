@@ -61,9 +61,48 @@ def get_gold_price_per_gram_twd():
     """取得黃金價格（台幣/公克）"""
     try:
         import yfinance as yf
-        gold = yf.Ticker('GC=F').history(period='1d')['Close'].iloc[-1]
-        usdtwd = yf.Ticker('USDTWD=X').history(period='1d')['Close'].iloc[-1]
-        return gold * usdtwd / 31.1035
+        
+        # 嘗試多種方式獲取黃金價格
+        gold_price = None
+        
+        # 方式1: 黃金期貨 (GC=F)
+        try:
+            gold = yf.Ticker('GC=F')
+            hist = gold.history(period='5d')
+            if not hist.empty:
+                gold_price = hist['Close'].iloc[-1]
+        except:
+            pass
+        
+        # 方式2: 如果期貨失敗，改用黃金現貨 (XAUUSD=X)
+        if gold_price is None:
+            try:
+                gold = yf.Ticker('XAUUSD=X')
+                hist = gold.history(period='5d')
+                if not hist.empty:
+                    gold_price = hist['Close'].iloc[-1]
+            except:
+                pass
+        
+        # 方式3: 如果還是失敗，用 GC=F 但改用更長期間
+        if gold_price is None:
+            try:
+                gold = yf.Ticker('GC=F')
+                hist = gold.history(period='1mo')
+                if not hist.empty:
+                    gold_price = hist['Close'].iloc[-1]
+            except:
+                pass
+        
+        if gold_price is None:
+            st.error("❌ 無法取得黃金價格")
+            return None
+        
+        # 獲取美金匯率
+        usdtwd = yf.Ticker('USDTWD=X').history(period='5d')['Close'].iloc[-1]
+        
+        # 轉換為台幣/公克 (1盎司 = 31.1035公克)
+        return gold_price * usdtwd / 31.1035
     except Exception as e:
         st.error(f"❌ 取得黃金價格失敗: {e}")
         return None
