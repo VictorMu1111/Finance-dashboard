@@ -634,8 +634,7 @@ def main():
         
         for idx, (name, symbol) in enumerate(commodities):
             data = get_market_data_cached(fin_svc, symbol)
-            period_map = {'1週': '5d', '1個月': '1mo', '3個月': '3mo', '6個月': '6mo', '1年': '1y'}
-                spark_data = get_sparkline_data(fin_svc, symbol, period=period_map.get(period_default, '5d'))
+            spark_data = get_sparkline_data(fin_svc, symbol, period=period_map.get(period_default, '5d'))
             if data:
                 render_card_with_button(
                     col=cmd_cols[idx],
