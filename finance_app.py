@@ -554,7 +554,8 @@ def main():
                     spark_data = spark_data[['Close']].tail(20)
             else:
                 data = get_market_data_cached(fin_svc, symbol)
-                spark_data = get_sparkline_data(fin_svc, symbol)
+                period_map = {'1週': '5d', '1個月': '1mo', '3個月': '3mo', '6個月': '6mo', '1年': '1y'}
+                spark_data = get_sparkline_data(fin_svc, symbol, period=period_map.get(period_default, '5d'))
             
             if data:
                 display_val = f"{data['price']:.3f}"
@@ -633,7 +634,8 @@ def main():
         
         for idx, (name, symbol) in enumerate(commodities):
             data = get_market_data_cached(fin_svc, symbol)
-            spark_data = get_sparkline_data(fin_svc, symbol)
+            period_map = {'1週': '5d', '1個月': '1mo', '3個月': '3mo', '6個月': '6mo', '1年': '1y'}
+                spark_data = get_sparkline_data(fin_svc, symbol, period=period_map.get(period_default, '5d'))
             if data:
                 render_card_with_button(
                     col=cmd_cols[idx],
@@ -718,7 +720,7 @@ def main():
                     cols = st.columns(4)
                     for col_idx, (name, symbol) in enumerate(row_tickers):
                         data = get_market_data_cached(fin_svc, symbol)
-                        spark_data = get_sparkline_data(fin_svc, symbol, period="1mo")
+                        spark_data = get_sparkline_data(fin_svc, symbol, period=period_map.get(period_default, '5d'))
                         if data:
                             colors_map = ["#1E88E5", "#E53935", "#43A047", "#FB8C00"]
                             render_card_with_button(
