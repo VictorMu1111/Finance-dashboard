@@ -223,9 +223,9 @@ def render_card_with_button(col, name, symbol, value_str, delta_str, btn_key, se
             margin-bottom: 5px;
             text-align: center;
         ">
-            <div style="font-size: 13px; font-weight: bold;">{name}</div>
-            <div style="font-size: 20px; font-weight: bold; margin: 5px 0;">{value_str}</div>
-            <div style="font-size: 12px; color: {delta_color};">
+            <div style="font-size: 15px; font-weight: bold;">{name}</div>
+            <div style="font-size: 32px; font-weight: bold; margin: 5px 0;">{value_str}</div>
+            <div style="font-size: 14px; color: {delta_color};">
                 {delta_arrow} {delta_str}
             </div>
         </div>
@@ -492,7 +492,7 @@ def main():
                     name=name,
                     symbol=symbol,
                     value_str=display_val,
-                    delta_str=f"{data['change_percent']}% | YTD: {data['ytd_change']}%",
+                    delta_str=f"{data['change_percent']:.3f}% | YTD: {data['ytd_change']:.3f}%",
                     btn_key=f"ex_btn_{symbol}",
                     session_key_symbol="selected_currency",
                     session_key_name="selected_currency_name"
@@ -565,7 +565,7 @@ def main():
                     name=name,
                     symbol=symbol,
                     value_str=f"{data['price']} {data['currency']}",
-                    delta_str=f"{data['change_percent']}% | YTD: {data['ytd_change']}%",
+                    delta_str=f"{data['change_percent']:.3f}% | YTD: {data['ytd_change']:.3f}%",
                     btn_key=f"cmd_btn_{symbol}",
                     session_key_symbol="selected_commodity",
                     session_key_name="selected_commodity_name"
@@ -646,7 +646,7 @@ def main():
                                 name=name,
                                 symbol=symbol,
                                 value_str=f"{data['price']}",
-                                delta_str=f"今日: {data['change_percent']}% | YTD: {data['ytd_change']}%",
+                                delta_str=f"今日: {data['change_percent']:.3f}% | YTD: {data['ytd_change']:.3f}%",
                                 btn_key=f"idx_btn_{symbol}",
                                 session_key_symbol="selected_index",
                                 session_key_name="selected_index_name"
