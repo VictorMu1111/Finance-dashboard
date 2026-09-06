@@ -162,9 +162,19 @@ def get_market_data_cached(_fin_svc, symbol):
 def get_sparkline_data(_fin_svc, symbol, period="5d"):
     """取得 sparkline 迷你走勢圖資料"""
     try:
+        # 依照時間區間決定顯示多少筆資料
+        data_points = {
+            '5d': 5,     # 1週 = 5 筆
+            '1mo': 22,   # 1個月 ~ 22 交易日
+            '3mo': 66,   # 3個月 ~ 66 交易日
+            '6mo': 130,  # 6個月 ~ 130 交易日
+            '1y': 250    # 1年 ~ 250 交易日
+        }
+        tail_n = data_points.get(period, 22)
+        
         hist = _fin_svc.get_historical_data(symbol, period=period)
         if hist is not None and not hist.empty:
-            return hist[['Close']].tail(20)
+            return hist[['Close']].tail(tail_n)
         return None
     except:
         return None
@@ -432,6 +442,9 @@ def main():
     chart_type = st.sidebar.radio("圖表樣式", ["線圖 (Line)", "K 線圖 (K-Line)"], horizontal=True)
     period_default = st.sidebar.selectbox("預設時間區間", ["1週", "1個月", "3個月", "6個月", "1年"], index=2)
 
+    # 全域時間區間對應表
+    global_period_map = {'1週': '5d', '1個月': '1mo', '3個月': '3mo', '6個月': '6mo', '1年': '1y'}
+
     if auto_refresh:
         refresh_status.caption(f"⏳ 上次更新: {datetime.now().strftime('%H:%M:%S')}")
 
@@ -555,7 +568,7 @@ def main():
             else:
                 data = get_market_data_cached(fin_svc, symbol)
                 period_map = {'1週': '5d', '1個月': '1mo', '3個月': '3mo', '6個月': '6mo', '1年': '1y'}
-                spark_data = get_sparkline_data(fin_svc, symbol, period=period_map.get(period_default, '5d'))
+                spark_data = get_sparkline_data(fin_svc, symbol, period=global_period_map.get(period_default, '5d'))
             
             if data:
                 display_val = f"{data['price']:.3f}"
@@ -634,7 +647,7 @@ def main():
         
         for idx, (name, symbol) in enumerate(commodities):
             data = get_market_data_cached(fin_svc, symbol)
-            spark_data = get_sparkline_data(fin_svc, symbol, period=period_map.get(period_default, '5d'))
+            spark_data = get_sparkline_data(fin_svc, symbol, period=global_period_map.get(period_default, '5d'))
             if data:
                 render_card_with_button(
                     col=cmd_cols[idx],
@@ -719,7 +732,7 @@ def main():
                     cols = st.columns(4)
                     for col_idx, (name, symbol) in enumerate(row_tickers):
                         data = get_market_data_cached(fin_svc, symbol)
-                        spark_data = get_sparkline_data(fin_svc, symbol, period=period_map.get(period_default, '5d'))
+                        spark_data = get_sparkline_data(fin_svc, symbol, period=global_period_map.get(period_default, '5d'))
                         if data:
                             colors_map = ["#1E88E5", "#E53935", "#43A047", "#FB8C00"]
                             render_card_with_button(
