@@ -1,3 +1,4 @@
+# 完整版 finance_app.py 內容
 import streamlit as st
 from FinanceDashboard import FinanceService
 import pandas as pd
@@ -6,10 +7,10 @@ import plotly.graph_objects as go
 import json
 import os
 import time
-from datetime import datetime
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from datetime import datetime
 
 # 頁面設定
 st.set_page_config(page_title="金融即時監控儀表板", page_icon="📈", layout="wide")
@@ -158,8 +159,19 @@ def get_market_data_cached(_fin_svc, symbol):
         return None
 
 @st.cache_data(ttl=300)
+def get_sparkline_data(_fin_svc, symbol, period="5d"):
+    """取得 sparkline 迷你走勢圖資料"""
+    try:
+        hist = _fin_svc.get_historical_data(symbol, period=period)
+        if hist is not None and not hist.empty:
+            return hist[['Close']].tail(20)
+        return None
+    except:
+        return None
+
+@st.cache_data(ttl=300)
 def get_cny_twd_history(_fin_svc, period="3mo"):
-    """計算人民幣兌台幣歷史匯率 (CNYTWD = USDTWD / USDCNY)"""
+    """計算人民幣兌台幣歷史匯率"""
     try:
         usdtwd = _fin_svc.get_historical_data("USDTWD=X", period=period)
         usdcny = _fin_svc.get_historical_data("USDCNY=X", period=period)
@@ -201,13 +213,67 @@ def get_cny_twd_market_data(_fin_svc):
     except Exception as e:
         return None
 
+# --- Sparkline 函式 ---
+def render_sparkline(data, height=40, line_color="#1E88E5", fill_color="rgba(30,136,229,0.2)"):
+    """繪製迷你走勢圖 (Sparkline) - 使用 smart scale 讓趨勢更明顯"""
+    try:
+        fig = go.Figure()
+        
+        # 計算資料範圍，加入 padding
+        close_data = data['Close']
+        min_val = close_data.min()
+        max_val = close_data.max()
+        range_val = max_val - min_val
+        
+        # 如果有波動，加入 20% padding（讓線條不會貼齊邊緣）
+        if range_val > 0:
+            padding = range_val * 0.2
+            y_min = min_val - padding
+            y_max = max_val + padding
+        else:
+            # 如果完全沒有波動，顯示一個範圍
+            y_min = min_val * 0.99
+            y_max = max_val * 1.01
+        
+        fig.add_trace(go.Scatter(
+            x=data.index,
+            y=close_data,
+            mode='lines',
+            line=dict(color=line_color, width=2),
+            fill='tozeroy',
+            fillcolor=fill_color,
+            hovertemplate='%{y:.3f}<extra></extra>'
+        ))
+        
+        fig.update_layout(
+            height=height,
+            margin=dict(l=0, r=0, t=0, b=0),
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, showline=False),
+            yaxis=dict(
+                showgrid=False, 
+                zeroline=False, 
+                showticklabels=False, 
+                showline=False,
+                range=[y_min, y_max]  # Smart scale：自動調整 Y 軸範圍
+            ),
+            hovermode='x',
+            showlegend=False,
+            autosize=True
+        )
+        
+        return fig
+    except:
+        return None
+
 
 # --- 共用：繪製卡片 + 按鈕函式 ---
-def render_card_with_button(col, name, symbol, value_str, delta_str, btn_key, session_key_symbol, session_key_name):
-    """繪製帶有歷史走勢按鈕的卡片"""
+def render_card_with_button(col, name, symbol, value_str, delta_str, btn_key, session_key_symbol, session_key_name, sparkline_data=None, line_color="#1E88E5", fill_color="rgba(30,136,229,0.2)"):
+    """繪製帶有歷史走勢按鈕的卡片（含迷你走勢圖）"""
     delta_val = 0.0
     try:
-        delta_val = float(delta_str.split('%')[0].replace('▲', '').replace('▼', '').replace('今日: ', '').strip())
+        delta_val = float(delta_str.split('%')[0].replace('▲', '').replace('▼', '').replace('今日: ', '').replace('%','').strip())
     except:
         pass
     delta_color = "green" if delta_val >= 0 else "red"
@@ -231,6 +297,11 @@ def render_card_with_button(col, name, symbol, value_str, delta_str, btn_key, se
         </div>
         """, unsafe_allow_html=True)
 
+        if sparkline_data is not None and not sparkline_data.empty:
+            fig = render_sparkline(sparkline_data, line_color=line_color, fill_color=fill_color)
+            if fig is not None:
+                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False}, key=f"spark_{btn_key}")
+
         if st.button("📊 歷史走勢", key=btn_key, use_container_width=True):
             if st.session_state[session_key_symbol] == symbol:
                 st.session_state[session_key_symbol] = None
@@ -241,11 +312,10 @@ def render_card_with_button(col, name, symbol, value_str, delta_str, btn_key, se
 
 
 def render_plotly_chart(chart_data, title, price_fmt=".3f", line_color="#1E88E5", chart_type="線圖 (Line)"):
-    """使用 Plotly 繪製圖表（自動最佳化 Y 軸）"""
+    """使用 Plotly 繪製圖表"""
     fig = go.Figure()
     
     if chart_type == "K 線圖 (K-Line)":
-        # K 線圖
         fig.add_trace(go.Candlestick(
             x=chart_data['Date'],
             open=chart_data['Open'],
@@ -253,13 +323,12 @@ def render_plotly_chart(chart_data, title, price_fmt=".3f", line_color="#1E88E5"
             low=chart_data['Low'],
             close=chart_data['Close'],
             name="價格",
-            increasing_line_color='red',   # 漲：紅
-            decreasing_line_color='green',  # 跌：綠
+            increasing_line_color='red',
+            decreasing_line_color='green',
             increasing_fillcolor='red',
             decreasing_fillcolor='green'
         ))
     else:
-        # 線圖 + 面積 + 最高/最低點
         fig.add_trace(go.Scatter(
             x=chart_data['Date'],
             y=chart_data['Close'],
@@ -270,7 +339,6 @@ def render_plotly_chart(chart_data, title, price_fmt=".3f", line_color="#1E88E5"
             fillcolor=f'rgba({int(line_color[1:3],16)},{int(line_color[3:5],16)},{int(line_color[5:7],16)},0.2)'
         ))
         
-        # 最高點
         max_idx = chart_data['Close'].idxmax()
         fig.add_trace(go.Scatter(
             x=[chart_data.loc[max_idx, 'Date']],
@@ -282,7 +350,6 @@ def render_plotly_chart(chart_data, title, price_fmt=".3f", line_color="#1E88E5"
             textposition='top center'
         ))
         
-        # 最低點
         min_idx = chart_data['Close'].idxmin()
         fig.add_trace(go.Scatter(
             x=[chart_data.loc[min_idx, 'Date']],
@@ -294,7 +361,6 @@ def render_plotly_chart(chart_data, title, price_fmt=".3f", line_color="#1E88E5"
             textposition='bottom center'
         ))
     
-    # 設定佈局（自動最佳化 Y 軸）
     fig.update_layout(
         title=title,
         xaxis_title="日期",
@@ -305,13 +371,13 @@ def render_plotly_chart(chart_data, title, price_fmt=".3f", line_color="#1E88E5"
         yaxis=dict(
             tickformat=price_fmt,
             tickfont=dict(size=11),
-            rangemode='normal',  # 自動選取最佳範圍
+            rangemode='normal',
             showgrid=True,
             griddash='dot'
         )
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key=f"plotly_{title}_{datetime.now().timestamp()}")
 
 
 def main():
@@ -359,10 +425,17 @@ def main():
 
     # --- 側邊欄 ---
     st.sidebar.markdown("<h2 style='color: #1E88E5;'>⚙️ 管理面板</h2>", unsafe_allow_html=True)
-        
-    # ============================================================
-    # Email 提醒設定
-    # ============================================================
+
+    auto_refresh = st.sidebar.toggle("自動更新 (每分鐘)", value=False)
+    refresh_status = st.sidebar.empty()
+
+    chart_type = st.sidebar.radio("圖表樣式", ["線圖 (Line)", "K 線圖 (K-Line)"], horizontal=True)
+    period_default = st.sidebar.selectbox("預設時間區間", ["1週", "1個月", "3個月", "6個月", "1年"], index=2)
+
+    if auto_refresh:
+        refresh_status.caption(f"⏳ 上次更新: {datetime.now().strftime('%H:%M:%S')}")
+
+    st.sidebar.markdown("---")
     st.sidebar.subheader("📧 黃金價格 Email 提醒")
     
     email_enabled = st.sidebar.toggle("啟用提醒", value=st.session_state.email_enabled)
@@ -374,7 +447,7 @@ def main():
             min_value=0.0,
             max_value=10000.0,
             value=float(st.session_state.email_target_price),
-            step=10.0,
+            step=1.0,
             format="%.0f"
         )
         st.session_state.email_target_price = target_price
@@ -408,16 +481,9 @@ def main():
     
     st.sidebar.markdown("---")
 
-    auto_refresh = st.sidebar.toggle("自動更新 (每分鐘)", value=False)
-    refresh_status = st.sidebar.empty()
-
-    chart_type = st.sidebar.radio("圖表樣式", ["線圖 (Line)", "K 線圖 (K-Line)"], horizontal=True)
-    period_default = st.sidebar.selectbox("預設時間區間", ["1週", "1個月", "3個月", "6個月", "1年"], index=2)
-
-    if auto_refresh:
-        refresh_status.caption(f"⏳ 上次更新: {datetime.now().strftime('%H:%M:%S')}")
-
-    st.sidebar.markdown("---")
+    # ============================================================
+    # 使用者清單管理
+    # ============================================================
     user_id = st.sidebar.text_input("👤 使用者帳號 (用於儲存清單)", value="default_user").strip()
     st.sidebar.subheader("📋 編輯追蹤清單")
 
@@ -471,19 +537,24 @@ def main():
         exchanges = [
             ("🇺🇸 美金", "USDTWD=X", None),
             ("🇪🇺 歐元", "EURTWD=X", None),
-            ("🇨🇳 人民幣", "CNYTWD=X", "custom"),  # 使用 custom 標記
+            ("🇨🇳 人民幣", "CNYTWD=X", "custom"),
             ("🇯🇵 日幣", "JPYTWD=X", None),
             ("🇨🇭 瑞士法郎", "CHFTWD=X", None),
             ("🇬🇧 英鎊", "GBPTWD=X", None)
         ]
 
         ex_cols = st.columns(6)
+        colors_map = ["#1E88E5", "#43A047", "#E53935", "#FB8C00", "#8E24AA", "#00897B"]
+        
         for idx, (name, symbol, custom) in enumerate(exchanges):
             if custom == "custom":
-                # 人民幣：使用計算的即時匯率
                 data = get_cny_twd_market_data(fin_svc)
+                spark_data = get_cny_twd_history(fin_svc, "1mo")
+                if spark_data is not None and not spark_data.empty:
+                    spark_data = spark_data[['Close']].tail(20)
             else:
                 data = get_market_data_cached(fin_svc, symbol)
+                spark_data = get_sparkline_data(fin_svc, symbol)
             
             if data:
                 display_val = f"{data['price']:.3f}"
@@ -495,7 +566,10 @@ def main():
                     delta_str=f"{data['change_percent']:.3f}% | YTD: {data['ytd_change']:.3f}%",
                     btn_key=f"ex_btn_{symbol}",
                     session_key_symbol="selected_currency",
-                    session_key_name="selected_currency_name"
+                    session_key_name="selected_currency_name",
+                    sparkline_data=spark_data,
+                    line_color=colors_map[idx],
+                    fill_color=f"rgba({int(colors_map[idx][1:3],16)},{int(colors_map[idx][3:5],16)},{int(colors_map[idx][5:7],16)},0.2)"
                 )
 
         # 匯率歷史資料
@@ -506,7 +580,6 @@ def main():
                 period_map = {"1週": "5d", "1個月": "1mo", "3個月": "3mo", "6個月": "6mo", "1年": "1y"}
                 period_key = period_map.get(period_default, "3mo")
 
-                # 如果是人民幣，使用計算的歷史資料
                 if selected_symbol == "CNYTWD=X":
                     hist = get_cny_twd_history(fin_svc, period_key)
                 else:
@@ -524,7 +597,6 @@ def main():
 
                     st.markdown("##### 收盤價走勢")
 
-                    # 使用 Plotly 繪圖
                     render_plotly_chart(
                         chart_data=chart_data,
                         title=f"{selected_name} 歷史匯率走勢",
@@ -557,8 +629,11 @@ def main():
         ]
 
         cmd_cols = st.columns(4)
+        colors_map = ["#FFB300", "#9E9E9E", "#1E88E5", "#43A047"]
+        
         for idx, (name, symbol) in enumerate(commodities):
             data = get_market_data_cached(fin_svc, symbol)
+            spark_data = get_sparkline_data(fin_svc, symbol)
             if data:
                 render_card_with_button(
                     col=cmd_cols[idx],
@@ -568,7 +643,10 @@ def main():
                     delta_str=f"{data['change_percent']:.3f}% | YTD: {data['ytd_change']:.3f}%",
                     btn_key=f"cmd_btn_{symbol}",
                     session_key_symbol="selected_commodity",
-                    session_key_name="selected_commodity_name"
+                    session_key_name="selected_commodity_name",
+                    sparkline_data=spark_data,
+                    line_color=colors_map[idx],
+                    fill_color=f"rgba({int(colors_map[idx][1:3],16)},{int(colors_map[idx][3:5],16)},{int(colors_map[idx][5:7],16)},0.2)"
                 )
 
         if st.session_state.selected_commodity:
@@ -640,7 +718,9 @@ def main():
                     cols = st.columns(4)
                     for col_idx, (name, symbol) in enumerate(row_tickers):
                         data = get_market_data_cached(fin_svc, symbol)
+                        spark_data = get_sparkline_data(fin_svc, symbol, period="1mo")
                         if data:
+                            colors_map = ["#1E88E5", "#E53935", "#43A047", "#FB8C00"]
                             render_card_with_button(
                                 col=cols[col_idx],
                                 name=name,
@@ -649,7 +729,10 @@ def main():
                                 delta_str=f"今日: {data['change_percent']:.3f}% | YTD: {data['ytd_change']:.3f}%",
                                 btn_key=f"idx_btn_{symbol}",
                                 session_key_symbol="selected_index",
-                                session_key_name="selected_index_name"
+                                session_key_name="selected_index_name",
+                                sparkline_data=spark_data,
+                                line_color=colors_map[col_idx % 4],
+                                fill_color=f"rgba({int(colors_map[col_idx % 4][1:3],16)},{int(colors_map[col_idx % 4][3:5],16)},{int(colors_map[col_idx % 4][5:7],16)},0.2)"
                             )
                         else:
                             with cols[col_idx]:
@@ -731,7 +814,6 @@ def main():
                             else:
                                 st.warning("暫無歷史趨勢數據")
 
-    # --- 自動刷新 ---
     # --- 自動刷新 + Email 檢查 ---
     if auto_refresh:
         # 每小時自動檢查黃金價格
@@ -743,6 +825,8 @@ def main():
             time.sleep(1)
         st.rerun()
     elif st.sidebar.button("🔄 手動刷新數據"):
+        if st.session_state.email_enabled:
+            check_gold_price_and_notify(auto=True)
         st.rerun()
 
 
